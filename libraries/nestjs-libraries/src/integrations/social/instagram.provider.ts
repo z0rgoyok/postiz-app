@@ -22,6 +22,15 @@ import { META_GRAPH_API_VERSION } from '@gitroom/nestjs-libraries/integrations/s
 import { Tool } from '@gitroom/nestjs-libraries/integrations/tool.decorator';
 import { DashboardFunction } from '@gitroom/nestjs-libraries/integrations/dashboard.function.decorator';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import {
+  authenticateInstagramUnified,
+  getInstagramUnifiedAccount,
+  instagramUnifiedAuthUrl,
+  instagramUnifiedConfig,
+  instagramUnifiedScopes,
+  isInstagramUnifiedToken,
+  listInstagramUnifiedAccounts,
+} from '@gitroom/nestjs-libraries/integrations/social/instagram.unified-login';
 
 @Rules(
   "Instagram should have at least one attachment, if it's a story, it can have only one picture"
@@ -31,9 +40,13 @@ export class InstagramProvider
   implements SocialProvider
 {
   identifier = 'instagram';
-  name = 'Instagram\n(Facebook Business)';
+  name = process.env.INSTAGRAM_UNIFIED_CONFIG_ID
+    ? 'Instagram\n(Unified Login)'
+    : 'Instagram\n(Facebook Business)';
   isBetweenSteps = true;
-  toolTip = 'Instagram must be business and connected to a Facebook page';
+  toolTip = process.env.INSTAGRAM_UNIFIED_CONFIG_ID
+    ? 'Connect a professional Instagram account through your Meta business portfolio'
+    : 'Instagram must be business and connected to a Facebook page';
   scopes = [
     'instagram_basic',
     'pages_show_list',
@@ -455,12 +468,14 @@ export class InstagramProvider
     requiredId: string,
     token: string
   ): Promise<Omit<AuthTokenDetails, 'refreshToken' | 'expiresIn'>> {
-    const [accessToken, userToken] = token.split('___');
-    const findPage = (await this.pages(accessToken)).find(
+    const credential = isInstagramUnifiedToken(token)
+      ? token
+      : token.split('___')[0];
+    const findPage = (await this.pages(credential)).find(
       (p) => p.id === requiredId
     );
 
-    const information = await this.fetchPageInformation(accessToken, {
+    const information = await this.fetchPageInformation(credential, {
       id: requiredId,
       pageId: findPage?.pageId!,
     });
@@ -476,6 +491,16 @@ export class InstagramProvider
 
   async generateAuthUrl() {
     const state = makeSecureId(6);
+    const unified = instagramUnifiedConfig();
+    if (unified) {
+      const redirectUri = `${process.env.FRONTEND_URL}/integrations/social/instagram`;
+      return {
+        url: instagramUnifiedAuthUrl(unified, redirectUri, state),
+        codeVerifier: makeSecureId(10),
+        state,
+      };
+    }
+
     return {
       url:
         `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth` +
@@ -495,6 +520,16 @@ export class InstagramProvider
     codeVerifier: string;
     refresh: string;
   }) {
+    const unified = instagramUnifiedConfig();
+    if (unified) {
+      const { scopes, ...credentials } = await authenticateInstagramUnified(
+        unified,
+        params.code
+      );
+      this.checkScopes(instagramUnifiedScopes, scopes);
+      return credentials;
+    }
+
     const getAccessToken = await (
       await fetch(
         `https://graph.facebook.com/${META_GRAPH_API_VERSION}/oauth/access_token` +
@@ -549,6 +584,10 @@ export class InstagramProvider
 
   @DashboardFunction()
   async pages(token: string) {
+    if (isInstagramUnifiedToken(token)) {
+      return listInstagramUnifiedAccounts(token);
+    }
+
     const [accessToken, userToken] = token.split('___');
     const seenPageIds = new Set<string>();
     const allFacebookPages: any[] = [];
@@ -636,6 +675,10 @@ export class InstagramProvider
     token: string,
     data: { pageId: string; id: string }
   ) {
+    if (isInstagramUnifiedToken(token)) {
+      return getInstagramUnifiedAccount(token, data);
+    }
+
     const [accessToken, userToken] = token.split('___');
     const { access_token, ...all } = await (
       await fetch(
