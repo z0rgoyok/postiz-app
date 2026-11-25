@@ -10,9 +10,9 @@ import {
 
 const config = { appId: '12', appSecret: 'test-secret', configId: '34' };
 const credential = 'test-token___test-token___unified';
+const redirect = 'https://example.test/integrations/social/instagram';
 
 test('Unified OAuth selects a configuration and preserves the redirect and state', () => {
-  const redirect = 'https://example.test/integrations/social/instagram';
   const url = new URL(instagramUnifiedAuthUrl(config, redirect, 'test-state'));
   assert.equal(url.origin, 'https://www.facebook.com');
   assert.equal(url.pathname, '/v27.0/dialog/oauth');
@@ -27,18 +27,23 @@ test('Unified OAuth selects a configuration and preserves the redirect and state
 });
 
 test('the token exchange binds the credential to the app and its client portfolio', async (t) => {
+  const authUrl = new URL(instagramUnifiedAuthUrl(config, redirect, 'test-state'));
   const fetch = t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url.origin, 'https://graph.facebook.com');
     assert.equal(options.redirect, 'error');
     switch (url.pathname) {
       case '/v27.0/oauth/access_token':
         assert.equal(url.searchParams.get('code'), 'code+&special');
+        assert.equal(
+          url.searchParams.get('redirect_uri'),
+          authUrl.searchParams.get('redirect_uri')
+        );
         return Response.json({ access_token: 'test-token' });
       case '/v27.0/debug_token':
         assert.equal(options.headers.Authorization, 'Bearer 12|test-secret');
         return Response.json({
           data: {
-            app_id: '12',
+            app_id: 12,
             is_valid: true,
             scopes: ['instagram_basic'],
             expires_at: 0,
@@ -52,7 +57,11 @@ test('the token exchange binds the credential to the app and its client portfoli
         assert.fail('Unexpected Graph request');
     }
   });
-  const result = await authenticateInstagramUnified(config, 'code+&special');
+  const result = await authenticateInstagramUnified(
+    config,
+    'code+&special',
+    redirect
+  );
   assert.equal(fetch.mock.callCount(), 3);
   assert.equal(result.id, 'instagram-unified-56');
   assert.equal(result.accessToken, credential);
@@ -60,6 +69,22 @@ test('the token exchange binds the credential to the app and its client portfoli
   assert.equal(isInstagramUnifiedToken('page-token___user-token'), false);
   assert.equal(result.expiresIn, undefined);
   assert.deepEqual(result.scopes, ['instagram_basic']);
+});
+
+test('Graph failures report the OAuth stage without exposing the response message', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json(
+      { error: { code: 100, error_subcode: 36008, message: 'test-secret' } },
+      { status: 400 }
+    )
+  );
+  await assert.rejects(
+    authenticateInstagramUnified(config, 'test-code', redirect),
+    {
+      message:
+        'Instagram Graph oauth/access_token failed (HTTP 400, code 100, subcode 36008)',
+    }
+  );
 });
 
 test('account discovery uses only the Graph cursor and enforces the offered selection', async (t) => {

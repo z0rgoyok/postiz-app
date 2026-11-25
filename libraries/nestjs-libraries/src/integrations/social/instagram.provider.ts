@@ -489,13 +489,16 @@ export class InstagramProvider
     };
   }
 
+  private get redirectUri() {
+    return `${process.env.FRONTEND_URL}/integrations/social/instagram`;
+  }
+
   async generateAuthUrl() {
     const state = makeSecureId(6);
     const unified = instagramUnifiedConfig();
     if (unified) {
-      const redirectUri = `${process.env.FRONTEND_URL}/integrations/social/instagram`;
       return {
-        url: instagramUnifiedAuthUrl(unified, redirectUri, state),
+        url: instagramUnifiedAuthUrl(unified, this.redirectUri, state),
         codeVerifier: makeSecureId(10),
         state,
       };
@@ -506,7 +509,7 @@ export class InstagramProvider
         `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth` +
         `?client_id=${process.env.FACEBOOK_APP_ID}` +
         `&redirect_uri=${encodeURIComponent(
-          `${process.env.FRONTEND_URL}/integrations/social/instagram`
+          this.redirectUri
         )}` +
         `&state=${state}` +
         `&scope=${encodeURIComponent(this.scopes.join(','))}`,
@@ -524,7 +527,8 @@ export class InstagramProvider
     if (unified) {
       const { scopes, ...credentials } = await authenticateInstagramUnified(
         unified,
-        params.code
+        params.code,
+        this.redirectUri
       );
       this.checkScopes(instagramUnifiedScopes, scopes);
       return credentials;
@@ -535,7 +539,7 @@ export class InstagramProvider
         `https://graph.facebook.com/${META_GRAPH_API_VERSION}/oauth/access_token` +
           `?client_id=${process.env.FACEBOOK_APP_ID}` +
           `&redirect_uri=${encodeURIComponent(
-            `${process.env.FRONTEND_URL}/integrations/social/instagram${
+            `${this.redirectUri}${
               params.refresh ? `?refresh=${params.refresh}` : ''
             }`
           )}` +

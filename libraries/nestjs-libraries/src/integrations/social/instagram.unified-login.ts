@@ -59,18 +59,35 @@ async function graphRequest<T>(
     headers: accessToken ? { Authorization: 'Bearer ' + accessToken } : {},
   });
   if (!response.ok) {
-    throw new Error('Instagram rejected the Graph API request');
+    const body = await response.json().catch(() => undefined);
+    const code = body?.error?.code;
+    const subcode = body?.error?.error_subcode;
+    const operation = /^\d+$/.test(endpoint) ? 'account' : endpoint;
+    const details = [
+      'HTTP ' + response.status,
+      Number.isInteger(code) ? 'code ' + code : '',
+      Number.isInteger(subcode) ? 'subcode ' + subcode : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(`Instagram Graph ${operation} failed (${details})`);
   }
   return response.json() as Promise<T>;
 }
 
 export async function authenticateInstagramUnified(
   config: UnifiedConfig,
-  code: string
+  code: string,
+  redirectUri: string
 ) {
   const { access_token: token } = await graphRequest<{ access_token?: string }>(
     'oauth/access_token',
-    { client_id: config.appId, client_secret: config.appSecret, code }
+    {
+      client_id: config.appId,
+      client_secret: config.appSecret,
+      redirect_uri: redirectUri,
+      code,
+    }
   );
   if (!token) {
     throw new Error('Instagram did not issue an access token');
@@ -78,7 +95,7 @@ export async function authenticateInstagramUnified(
 
   const { data } = await graphRequest<{
     data?: {
-      app_id?: string;
+      app_id?: string | number;
       is_valid?: boolean;
       scopes?: string[];
       expires_at?: number;
@@ -89,7 +106,7 @@ export async function authenticateInstagramUnified(
     config.appId + '|' + config.appSecret
   );
 
-  if (!data?.is_valid || data.app_id !== config.appId) {
+  if (!data?.is_valid || String(data.app_id) !== config.appId) {
     throw new Error('Instagram did not confirm the app access token');
   }
 
